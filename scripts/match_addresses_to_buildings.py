@@ -113,40 +113,59 @@ def main():
         buildings_data = json.load(f)
 
     global_osm_nodes = {}
+    global_osm_ways = {}
 
-    buildings_ways = {}
+    buildings = {}
     building_address_index = {}
     buildings_address_tags = {}
     buildings_all_tags = {}
     for osm_elem in buildings_data['elements']:
         osm_id = osm_elem['id']
         osm_type = osm_elem['type']
+        tags = osm_elem.get('tags', {})
         if osm_type == 'node':
             global_osm_nodes[osm_id] = np.array([
                 osm_elem['lat'],
                 osm_elem['lon'],
             ], dtype=float)
         elif osm_type == 'way':
-            # Let's make sure it's an area. Then we can remove one of
-            # the duplicated endpoints.
-            nodes = osm_elem['nodes']
-            if len(nodes) < 3 or nodes[0] != nodes[-1]:
-                print(f'Skip way {osm_id}: Not an area')
-                continue
-            buildings_ways[osm_id] = np.array(
-                osm_elem['nodes'][1:],
+            global_osm_ways[osm_id] = np.array(
+                osm_elem['nodes'],
                 dtype=int,
             )
+            if tags.get('building', 'no') != 'no':
+                buildings[osm_id] = 'way', None
         elif osm_type == 'relation':
-            name_tag = osm_elem.get('tags', {}).get('name', '<unknown>')
-            print(
-                f'Skip relation {osm_id} ({name_tag}):'
-                ' Relations handling not implemented!'
-            )
+            relation_type = tags.get('type')
+            if tags.get('building', 'no') == 'no':
+                name_tag = tags.get('name', '<unknown>')
+                print(
+                    f'Skip relation {osm_id} ({name_tag}):'
+                    f' Not a building!'
+                )
+            elif relation_type != 'multipolygon':
+                name_tag = tags.get('name', '<unknown>')
+                print(
+                    f'Skip relation {osm_id} ({name_tag}):'
+                    f' Unknown relation type: {relation_type}!'
+                )
+            else:
+                outer_members = []
+                for member in osm_elem['members']:
+                    if member.get('type') == 'way' and member.get('role') == 'outer':
+                        outer_members.append(member)
+
+                if len(outer_members) != 1:
+                    name_tag = tags.get('name', '<unknown>')
+                    print(
+                        f'Skip relation {osm_id} ({name_tag}):'
+                        f' Multiple outer roles not supported: {len(outer_members)}!'
+                    )
+                else:
+                    buildings[osm_id] = 'relation', outer_members[0]['ref']
         else:
             print(f'Unhandled type {osm_id}: {osm_type}')
 
-        tags = osm_elem.get('tags', {})
         if (
             (house_number := tags.get('addr:housenumber')) and
             (street := tags.get('addr:street'))
@@ -158,7 +177,7 @@ def main():
 
         buildings_all_tags[osm_id] = tags
 
-    print(f'Registered {len(buildings_ways)} buildings')
+    print(f'Registered {len(buildings)} buildings')
 
     # Parse OSM address points
     with open('data/osm_address_points.json', 'r') as f:
@@ -191,9 +210,21 @@ def main():
     buildings_bounds = {}
     buildings_centroids = {}
     buildings_major_axis = {}
-    for building_id, nodes in buildings_ways.items():
-        # Convex hull
+    for building_id, (osm_type, ref) in buildings.items():
+        if osm_type == 'way':
+            nodes = global_osm_ways[building_id]
+        elif osm_type == 'relation':
+            nodes = global_osm_ways[ref]
+        else:
+            continue
+
+        if len(nodes) < 4 or nodes[0] != nodes[-1]:
+            print(f'Invalid building geometry: {building_id}')
+            continue
+
         points = np.array([global_osm_nodes[node_id] for node_id in nodes])
+
+        # Convex hull
         hull = ConvexHull(points)
 
         mins = np.min(hull.points[hull.vertices], axis=0)
@@ -362,9 +393,17 @@ def main():
             for building_id, (address, coords) in sorted(building_far_from_address.items()):
                 f.write('\x1e')
 
+                osm_type, ref = buildings[building_id]
+                if osm_type == 'way':
+                    nodes = global_osm_ways[building_id]
+                elif osm_type == 'relation':
+                    nodes = global_osm_ways[ref]
+                else:
+                    continue
+
                 latlon_coords = np.array([
                     global_osm_nodes[node_id]
-                    for node_id in iter_as_circle(buildings_ways[building_id])
+                    for node_id in nodes
                 ])
                 polygon_coords = np.column_stack((latlon_coords[:,1], latlon_coords[:,0])).tolist()
 
@@ -589,14 +628,23 @@ def main():
             included_mismatches = set()
             for building_id, (feature_ids, street_addr, cities, osm_street) in sorted(mismatched_building_street_tags.items()):
                 osm_addr = buildings_address_tags[building_id]
+
+                osm_type, ref = buildings[building_id]
+                if osm_type == 'way':
+                    nodes = global_osm_ways[building_id]
+                elif osm_type == 'relation':
+                    nodes = global_osm_ways[ref]
+                else:
+                    continue
+
                 latlon_coords = np.array([
                     global_osm_nodes[node_id]
-                    for node_id in iter_as_circle(buildings_ways[building_id])
+                    for node_id in nodes
                 ])
                 polygon_coords = np.column_stack((latlon_coords[:,1], latlon_coords[:,0])).tolist()
 
                 properties = {
-                    'id': f'way/{building_id}',
+                    'id': f'{osm_type}/{building_id}',
                 }
                 existing_tags = buildings_all_tags[building_id]
                 for tag in ('addr:city', 'addr:street', 'addr:housenumber'):
