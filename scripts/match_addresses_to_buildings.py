@@ -359,7 +359,7 @@ def main():
         print(f'Writing building_far_from_address issues... ({count_issues} issues)')
         with open('issues/building_far_from_address_issues.geojson', 'w') as f:
             # Write buildings
-            for building_id, (address, coords) in building_far_from_address.items():
+            for building_id, (address, coords) in sorted(building_far_from_address.items()):
                 f.write('\x1e')
 
                 latlon_coords = np.array([
@@ -485,7 +485,7 @@ def main():
         print(f'Writing building_missing_from_area issues... ({len(missing_building_areas)} issues)')
         with open('issues/building_missing_from_area.geojson', 'w') as f:
             # Write area
-            for (lat_sq, lon_sq), count in missing_building_areas.most_common():
+            for (lat_sq, lon_sq), count in sorted(missing_building_areas.most_common()):
                 f.write('\x1e')
 
                 min_lat = lat_sq * search_dist_ang
@@ -587,7 +587,7 @@ def main():
         print(f'Writing mismatched_building_street_tags issues... ({len(mismatched_building_street_tags)} issues)')
         with open('issues/mismatched_building_street_tags.geojson', 'w') as f:
             included_mismatches = set()
-            for building_id, (feature_ids, street_addr, cities, osm_street) in mismatched_building_street_tags.items():
+            for building_id, (feature_ids, street_addr, cities, osm_street) in sorted(mismatched_building_street_tags.items()):
                 osm_addr = buildings_address_tags[building_id]
                 latlon_coords = np.array([
                     global_osm_nodes[node_id]
