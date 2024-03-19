@@ -29,7 +29,7 @@ def main():
         offset += count
         time.sleep(0.1)
 
-    with open('smc_address.geojson', 'w') as f:
+    with open('data/smc_address.geojson', 'w') as f:
         json.dump(base_data, f)
 
 

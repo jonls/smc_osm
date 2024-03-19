@@ -109,7 +109,7 @@ def iter_as_circle(iterable: Iterable[T]) -> Iterator[T]:
 
 def main():
     # Parse OSM buildings
-    with open('osm_buildings.json', 'r') as f:
+    with open('data/osm_buildings.json', 'r') as f:
         buildings_data = json.load(f)
 
     global_osm_nodes = {}
@@ -161,7 +161,7 @@ def main():
     print(f'Registered {len(buildings_ways)} buildings')
 
     # Parse OSM address points
-    with open('osm_address_points.json', 'r') as f:
+    with open('data/osm_address_points.json', 'r') as f:
         address_points_data = json.load(f)
 
     point_address_index = {}
@@ -222,7 +222,7 @@ def main():
             buildings_major_axis[building_id] = min_normal, min_bounds
 
     # Parse GeoJson address data
-    with open('smc_address.geojson', 'r') as f:
+    with open('data/smc_address.geojson', 'r') as f:
         address_data = json.load(f)
 
     addresses = {}
@@ -357,7 +357,7 @@ def main():
     count_issues = len(building_far_from_address) + len(point_address_far_from_address)
     if count_issues > 0:
         print(f'Writing building_far_from_address issues... ({count_issues} issues)')
-        with open('building_far_from_address_issues.geojson', 'w') as f:
+        with open('issues/building_far_from_address_issues.geojson', 'w') as f:
             # Write buildings
             for building_id, (address, coords) in building_far_from_address.items():
                 f.write('\x1e')
@@ -483,7 +483,7 @@ def main():
 
     if len(missing_building_areas) > 0:
         print(f'Writing building_missing_from_area issues... ({len(missing_building_areas)} issues)')
-        with open('building_missing_from_area.geojson', 'w') as f:
+        with open('issues/building_missing_from_area.geojson', 'w') as f:
             # Write area
             for (lat_sq, lon_sq), count in missing_building_areas.most_common():
                 f.write('\x1e')
@@ -585,7 +585,7 @@ def main():
 
     if len(mismatched_building_street_tags) > 0:
         print(f'Writing mismatched_building_street_tags issues... ({len(mismatched_building_street_tags)} issues)')
-        with open('mismatched_building_street_tags.geojson', 'w') as f:
+        with open('issues/mismatched_building_street_tags.geojson', 'w') as f:
             included_mismatches = set()
             for building_id, (feature_ids, street_addr, cities, osm_street) in mismatched_building_street_tags.items():
                 osm_addr = buildings_address_tags[building_id]

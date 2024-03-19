@@ -26,7 +26,7 @@ def download_buildings():
             (._;>;);
             out;
         ''',
-        output_file='osm_buildings.json',
+        output_file='data/osm_buildings.json',
     )
 
 
@@ -38,7 +38,7 @@ def download_address_points():
             node["addr:housenumber"]["addr:street"](area);
             out;
         ''',
-        output_file='osm_address_points.json',
+        output_file='data/osm_address_points.json',
     )
 
 
