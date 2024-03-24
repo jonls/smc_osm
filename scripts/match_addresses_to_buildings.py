@@ -13,6 +13,9 @@ from scipy.spatial import KDTree
 
 T = TypeVar('T')
 
+EARTH_RADIUS = 6_371  # km
+EARTH_CIRCUMFERENCE = EARTH_RADIUS * 2 * math.pi  # km
+
 
 def batched(iterable: Iterable[T], n: int) -> Iterator[list[T]]:
     """Batch data into tuples of length n. The last batch may be shorter."""
@@ -88,9 +91,9 @@ def title_case_street_name(s: str) -> str:
 def is_closer_than(
     coords1: np.array,
     coords2: np.array,
-    dist_meters: float,
+    dist_km: float,
 ) -> bool:
-    approx_ang_dist = dist_meters / 40_000_000 * 360
+    approx_ang_dist = dist_km / EARTH_CIRCUMFERENCE * 360
     return np.linalg.norm(coords1 - coords2) <= approx_ang_dist
 
 
@@ -105,6 +108,74 @@ def iter_as_circle(iterable: Iterable[T]) -> Iterator[T]:
     yield first
     yield from it
     yield first
+
+
+def get_local_space(l: np.array) -> np.array:
+    """Create local space for input lat/lon
+
+    :return: local space (shape: 3x3)
+    """
+    theta = math.pi/2 + -np.deg2rad(l[0])
+    phi = np.deg2rad(l[1])
+
+    sin_theta = np.sin(theta)
+    cos_theta = np.cos(theta)
+    sin_phi = np.sin(phi)
+    cos_phi = np.cos(phi)
+
+    local_v1 = np.array([
+        -cos_phi * cos_theta,
+        -sin_phi * cos_theta,
+        sin_theta,
+    ])
+    local_v2 = np.array([
+        -sin_phi,
+        cos_phi,
+        0,
+    ])
+    normal = np.array([
+        sin_theta * cos_phi,
+        sin_theta * sin_phi,
+        cos_theta,
+    ])
+    return np.column_stack([local_v1, local_v2, normal])
+
+
+def to_local_plane(l: np.array, local_space: np.array) -> np.array:
+    """Transform input (lat, lon)s into local plane.
+
+    :param l: Lat/lon pairs in degrees (shape: Nx2)
+    :param local_space: Local space (shape: 3x3)
+    :return: local plane coordinates (shape: Nx2)
+    """
+    theta = np.pi/2 - np.deg2rad(l[:,0])
+    phi = np.deg2rad(l[:,1])
+    sin_theta = np.sin(theta)
+    x = EARTH_RADIUS * np.column_stack([
+        sin_theta * np.cos(phi),
+        sin_theta * np.sin(phi),
+        np.cos(theta),
+    ])
+    u = local_space.T.dot(x.T).T
+    return u[:,:2]
+
+
+def to_world_latlon(u: np.array, local_space: np.array) -> np.array:
+    """Transform us in local space in (lat, lon) coords.
+
+    :param u: Local space coordinates (shape: Nx2)
+    :param local_space: Local space (shape: 3x3)
+    :return: World lat/lon coordinates in degrees (shape: Nx2)
+    """
+    u_len = np.linalg.norm(u.T, axis=0)
+    f = np.sqrt((EARTH_RADIUS - u_len) * (EARTH_RADIUS + u_len))
+    x = local_space.dot(np.column_stack([u, f]).T).T
+    theta = np.arccos(x[:,2] / EARTH_RADIUS)
+    phi = np.arctan2(x[:,1], x[:,0])
+    return np.column_stack([
+        (math.pi/2 - theta)*180/math.pi,
+        phi*180/math.pi,
+    ])
 
 
 def main():
@@ -223,34 +294,35 @@ def main():
             continue
 
         points = np.array([global_osm_nodes[node_id] for node_id in nodes])
-
-        # Convex hull
-        hull = ConvexHull(points)
-
-        mins = np.min(hull.points[hull.vertices], axis=0)
-        maxs = np.max(hull.points[hull.vertices], axis=0)
-
+        mins = np.min(points, axis=0)
+        maxs = np.max(points, axis=0)
         buildings_bounds[building_id] = np.array([mins, maxs]).T
 
         centroid = (mins + maxs) / 2
         buildings_centroids[building_id] = centroid
 
-        min_bounding_box_area = float('inf')
-        min_normal = None
-        min_bounds = None
+        local_space = get_local_space(centroid)
+        local_points = to_local_plane(l=points, local_space=local_space)
+
+        # Convex hull
+        hull = ConvexHull(local_points)
+
+        min_bounding_box_perimeter = float('inf')
+        min_values = None
         for a, b, _ in hull.equations:
-            rotation = np.array([[a, b], [b, -a]])
-            rot_ps = rotation.dot(hull.points[hull.vertices].T).T
+            rotation = np.column_stack([[a, b], [-b, a]])
+            rot_ps = rotation.T.dot(hull.points[hull.vertices].T).T
             rot_mins = np.min(rot_ps, axis=0)
             rot_maxs = np.max(rot_ps, axis=0)
-            area = np.prod(rot_maxs - rot_mins)
-            if area < min_bounding_box_area:
-                min_bounding_box_area = area
+            perimeter = 2 * np.sum(rot_maxs - rot_mins)
+            if perimeter < min_bounding_box_perimeter:
+                min_bounding_box_perimeter = perimeter
                 min_normal = np.array([a, b])
                 min_bounds = np.array([rot_mins, rot_maxs]).T
+                min_values = local_space, min_normal, min_bounds
 
-        if min_normal is not None and min_bounds is not None:
-            buildings_major_axis[building_id] = min_normal, min_bounds
+        if min_values is not None:
+            buildings_major_axis[building_id] = min_values
 
     # Parse GeoJson address data
     with open('data/smc_address.geojson', 'r') as f:
@@ -356,13 +428,13 @@ def main():
             # Check if this is the expected location
             if (
                 building_id in buildings_centroids and
-                not is_closer_than(coords, buildings_centroids[building_id], dist_meters=300)
+                not is_closer_than(coords, buildings_centroids[building_id], dist_km=0.3)
             ):
                 building_far_from_address[building_id] = (
                     f'{house_number} {full_street}, {city}',
                     coords,
                 )
-            
+
             continue
 
         # Lookup in address point index
@@ -370,7 +442,7 @@ def main():
             # Check if this is the expected location
             if (
                 point_address_id in global_osm_nodes and
-                not is_closer_than(coords, global_osm_nodes[point_address_id], dist_meters=300)
+                not is_closer_than(coords, global_osm_nodes[point_address_id], dist_km=0.3)
             ):
                 point_address_far_from_address[point_address_id] = (
                     f'{house_number} {full_street}, {city}',
@@ -471,7 +543,9 @@ def main():
     # Search parameters
     search_dist = 200 # meters
     # Approximate angular radius for the given distance
-    search_dist_ang = search_dist / 40_000_000 * 360
+    search_dist_ang = (search_dist / 1000) / EARTH_CIRCUMFERENCE * 360
+
+    print('Searching against spatial index of buildings...')
 
     # Find building matches for OSM addresses
     osm_point_to_building_matches = {}
@@ -485,9 +559,10 @@ def main():
                 building_id = centroids_index[match]
 
                 # Check if the search point is inside the oriented bounding box of the building
-                (a, b), bounds = buildings_major_axis[building_id]
-                rot = np.array([[a, b], [b, -a]])
-                rot_coord = rot.dot(coord)
+                local_space, (a, b), bounds = buildings_major_axis[building_id]
+                rotation = np.column_stack([[a, b], [-b, a]])
+                u, = to_local_plane(l=np.array([coord]), local_space=local_space)
+                rot_coord = rotation.T.dot(u.T).T
                 if (bounds[:,0] <= rot_coord).all() and (rot_coord <= bounds[:,1]).all():
                     building_to_osm_point_matches.setdefault(building_id, {}).setdefault((house_number, street), []).append(osm_id)
                     osm_point_to_building_matches.setdefault(osm_id, []).append(building_id)
@@ -510,9 +585,10 @@ def main():
             for match in matches:
                 building_id = centroids_index[match]
                 # Check if the search point is inside the oriented bounding box of the building
-                (a, b), bounds = buildings_major_axis[building_id]
-                rot = np.array([[a, b], [b, -a]])
-                rot_coord = rot.dot(coord)
+                local_space, (a, b), bounds = buildings_major_axis[building_id]
+                rotation = np.column_stack([[a, b], [-b, a]])
+                u, = to_local_plane(l=np.array([coord]), local_space=local_space)
+                rot_coord = rotation.T.dot(u.T).T
                 if (bounds[:,0] <= rot_coord).all() and (rot_coord <= bounds[:,1]).all():
                     building_to_address_matches.setdefault(building_id, {}).setdefault((house_number, street), []).append(feature_id)
                     address_to_building_matches.setdefault(feature_id, []).append(building_id)
