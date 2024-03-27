@@ -331,6 +331,7 @@ def main():
     addresses = {}
     building_far_from_address = {}
     point_address_far_from_address = {}
+    buildings_matched_to_address = {}
     for feature in address_data['features']:
         feature_id = feature['id']
         lon, lat = feature['geometry']['coordinates']
@@ -423,7 +424,7 @@ def main():
         if street_type:
             full_street = full_street + ' ' + street_type
 
-        # Lookup in building address index
+        # Lookup in building address index and match
         if (building_id := building_address_index.get((house_number, full_street, city))):
             # Check if this is the expected location
             if (
@@ -434,6 +435,8 @@ def main():
                     f'{house_number} {full_street}, {city}',
                     coords,
                 )
+            else:
+                buildings_matched_to_address[building_id] = feature_id
 
             continue
 
@@ -458,75 +461,74 @@ def main():
         )
 
     count_issues = len(building_far_from_address) + len(point_address_far_from_address)
-    if count_issues > 0:
-        print(f'Writing building_far_from_address issues... ({count_issues} issues)')
-        with open('issues/building_far_from_address_issues.geojson', 'w') as f:
-            # Write buildings
-            for building_id, (address, coords) in sorted(building_far_from_address.items()):
-                f.write('\x1e')
+    print(f'Writing building_far_from_address issues... ({count_issues} issues)')
+    with open('issues/building_far_from_address_issues.geojson', 'w') as f:
+        # Write buildings
+        for building_id, (address, coords) in sorted(building_far_from_address.items()):
+            f.write('\x1e')
 
-                osm_type, ref = buildings[building_id]
-                if osm_type == 'way':
-                    nodes = global_osm_ways[building_id]
-                elif osm_type == 'relation':
-                    nodes = global_osm_ways[ref]
-                else:
-                    continue
+            osm_type, ref = buildings[building_id]
+            if osm_type == 'way':
+                nodes = global_osm_ways[building_id]
+            elif osm_type == 'relation':
+                nodes = global_osm_ways[ref]
+            else:
+                continue
 
-                latlon_coords = np.array([
-                    global_osm_nodes[node_id]
-                    for node_id in nodes
-                ])
-                polygon_coords = np.column_stack((latlon_coords[:,1], latlon_coords[:,0])).tolist()
+            latlon_coords = np.array([
+                global_osm_nodes[node_id]
+                for node_id in nodes
+            ])
+            polygon_coords = np.column_stack((latlon_coords[:,1], latlon_coords[:,0])).tolist()
 
-                geo_doc = {
-                    'type': 'FeatureCollection',
-                    'features': [
-                        {
-                            'type': 'Feature',
-                            'geometry': {
-                                'type': 'Polygon',
-                                'coordinates': [
-                                    polygon_coords,
-                                ],
-                            },
-                            'properties': {
-                                'id': building_id,
-                                'parsed_address': address,
-                                'point_url': f'https://www.openstreetmap.org/search?query={coords[0]}%2C%20{coords[1]}',
-                            },
+            geo_doc = {
+                'type': 'FeatureCollection',
+                'features': [
+                    {
+                        'type': 'Feature',
+                        'geometry': {
+                            'type': 'Polygon',
+                            'coordinates': [
+                                polygon_coords,
+                            ],
                         },
-                    ],
-                }
-                json.dump(geo_doc, f)
-                f.write('\n')
-
-            # Write point addresses
-            for node_id, (address, coords) in point_address_far_from_address.items():
-                f.write('\x1e')
-
-                lat, lon = global_osm_nodes[node_id]
-                geo_doc = {
-                    'type': 'FeatureCollection',
-                    'features': [
-                        {
-                            'type': 'Feature',
-                            'geometry': {
-                                'type': 'Point',
-                                'coordinates': [
-                                    lon, lat
-                                ],
-                            },
-                            'properties': {
-                                'id': node_id,
-                                'parsed_address': address,
-                                'point_url': f'https://www.openstreetmap.org/search?query={coords[0]}%2C%20{coords[1]}',
-                            },
+                        'properties': {
+                            'id': building_id,
+                            'parsed_address': address,
+                            'point_url': f'https://www.openstreetmap.org/search?query={coords[0]}%2C%20{coords[1]}',
                         },
-                    ],
-                }
-                json.dump(geo_doc, f)
-                f.write('\n')
+                    },
+                ],
+            }
+            json.dump(geo_doc, f)
+            f.write('\n')
+
+        # Write point addresses
+        for node_id, (address, coords) in point_address_far_from_address.items():
+            f.write('\x1e')
+
+            lat, lon = global_osm_nodes[node_id]
+            geo_doc = {
+                'type': 'FeatureCollection',
+                'features': [
+                    {
+                        'type': 'Feature',
+                        'geometry': {
+                            'type': 'Point',
+                            'coordinates': [
+                                lon, lat
+                            ],
+                        },
+                        'properties': {
+                            'id': node_id,
+                            'parsed_address': address,
+                            'point_url': f'https://www.openstreetmap.org/search?query={coords[0]}%2C%20{coords[1]}',
+                        },
+                    },
+                ],
+            }
+            json.dump(geo_doc, f)
+            f.write('\n')
 
     print(f'Registered {len(addresses)} addresses')
 
@@ -596,60 +598,59 @@ def main():
     print(f'Found {len(osm_point_to_building_matches)} osm point to building matches')
     print(f'Found {len(building_to_osm_point_matches)} building to osm point matches')
 
-    if len(missing_building_areas) > 0:
-        print(f'Writing building_missing_from_area issues... ({len(missing_building_areas)} issues)')
-        with open('issues/building_missing_from_area.geojson', 'w') as f:
-            # Write area
-            for (lat_sq, lon_sq), count in sorted(missing_building_areas.most_common()):
-                f.write('\x1e')
+    print(f'Writing building_missing_from_area issues... ({len(missing_building_areas)} issues)')
+    with open('issues/building_missing_from_area.geojson', 'w') as f:
+        # Write area
+        for (lat_sq, lon_sq), count in sorted(missing_building_areas.most_common()):
+            f.write('\x1e')
 
-                min_lat = lat_sq * search_dist_ang
-                max_lat = (lat_sq + 1) * search_dist_ang
-                min_lon = lon_sq * search_dist_ang
-                max_lon = (lon_sq + 1) * search_dist_ang
+            min_lat = lat_sq * search_dist_ang
+            max_lat = (lat_sq + 1) * search_dist_ang
+            min_lon = lon_sq * search_dist_ang
+            max_lon = (lon_sq + 1) * search_dist_ang
 
-                external_id = f'{search_dist}/{lat_sq}/{lon_sq}'
-                boundary_coords = [
-                    [min_lon, min_lat],
-                    [min_lon, max_lat],
-                    [max_lon, max_lat],
-                    [max_lon, min_lat],
-                    [min_lon, min_lat],
-                ]
+            external_id = f'{search_dist}/{lat_sq}/{lon_sq}'
+            boundary_coords = [
+                [min_lon, min_lat],
+                [min_lon, max_lat],
+                [max_lon, max_lat],
+                [max_lon, min_lat],
+                [min_lon, min_lat],
+            ]
 
-                geo_doc = {
-                    'type': 'FeatureCollection',
-                    'features': [
-                        {
+            geo_doc = {
+                'type': 'FeatureCollection',
+                'features': [
+                    {
+                        'type': 'Feature',
+                        'geometry': {
+                            'type': 'Polygon',
+                            'coordinates': [boundary_coords],
+                        },
+                        'properties': {
+                            'external_id': external_id,
+                            'count': count,
+                        },
+                    },
+                ],
+                'attachments': [
+                    {
+                        'id': external_id,
+                        'kind': 'referenceLayer',
+                        'type': 'geojson',
+                        'name': 'Boundary',
+                        'data': {
                             'type': 'Feature',
                             'geometry': {
                                 'type': 'Polygon',
                                 'coordinates': [boundary_coords],
                             },
-                            'properties': {
-                                'external_id': external_id,
-                                'count': count,
-                            },
                         },
-                    ],
-                    'attachments': [
-                        {
-                            'id': external_id,
-                            'kind': 'referenceLayer',
-                            'type': 'geojson',
-                            'name': 'Boundary',
-                            'data': {
-                                'type': 'Feature',
-                                'geometry': {
-                                    'type': 'Polygon',
-                                    'coordinates': [boundary_coords],
-                                },
-                            },
-                        },
-                    ],
-                }
-                json.dump(geo_doc, f)
-                f.write('\n')
+                    },
+                ],
+            }
+            json.dump(geo_doc, f)
+            f.write('\n')
 
     print(f'Found {len(address_to_building_matches)} address to building matches')
     print(f'Found {len(building_to_address_matches)} building to address matches')
@@ -657,7 +658,9 @@ def main():
     # Find one-to-one matches
     one_to_one_matches = {}
     for building_id, address_matches in building_to_address_matches.items():
-        if len(address_matches) != 1:
+        # Filter if there are more than one match, or if building was already
+        # matched perfectly by address.
+        if len(address_matches) != 1 or building_id in buildings_matched_to_address:
             continue
 
         street_addr, feature_ids = next(iter(address_matches.items()))
@@ -698,61 +701,107 @@ def main():
     print(f'Found {len(mismatched_building_street_tags)} buildings with mismatched street tags')
     print(f'Found {len(mismatched_building_both_tags)} buildings with both mismatched tags')
 
-    if len(mismatched_building_street_tags) > 0:
-        print(f'Writing mismatched_building_street_tags issues... ({len(mismatched_building_street_tags)} issues)')
-        with open('issues/mismatched_building_street_tags.geojson', 'w') as f:
-            included_mismatches = set()
-            for building_id, (feature_ids, street_addr, cities, osm_street) in sorted(mismatched_building_street_tags.items()):
-                osm_addr = buildings_address_tags[building_id]
+    print(f'Writing mismatched_building_street_tags issues... ({len(mismatched_building_street_tags)} issues)')
+    with open('issues/mismatched_building_street_tags.geojson', 'w') as f:
+        included_mismatches = set()
+        for building_id, (feature_ids, street_addr, cities, osm_street) in sorted(mismatched_building_street_tags.items()):
+            osm_addr = buildings_address_tags[building_id]
 
-                osm_type, ref = buildings[building_id]
-                if osm_type == 'way':
-                    nodes = global_osm_ways[building_id]
-                elif osm_type == 'relation':
-                    nodes = global_osm_ways[ref]
-                else:
-                    continue
+            osm_type, ref = buildings[building_id]
+            if osm_type == 'way':
+                nodes = global_osm_ways[building_id]
+            elif osm_type == 'relation':
+                nodes = global_osm_ways[ref]
+            else:
+                continue
 
-                latlon_coords = np.array([
-                    global_osm_nodes[node_id]
-                    for node_id in nodes
-                ])
-                polygon_coords = np.column_stack((latlon_coords[:,1], latlon_coords[:,0])).tolist()
+            latlon_coords = np.array([
+                global_osm_nodes[node_id]
+                for node_id in nodes
+            ])
+            polygon_coords = np.column_stack((latlon_coords[:,1], latlon_coords[:,0])).tolist()
 
-                properties = {
-                    'id': f'{osm_type}/{building_id}',
-                }
-                existing_tags = buildings_all_tags[building_id]
-                for tag in ('addr:city', 'addr:street', 'addr:housenumber'):
-                    if tag in existing_tags:
-                        properties[tag] = existing_tags[tag]
+            properties = {
+                'id': f'{osm_type}/{building_id}',
+            }
+            existing_tags = buildings_all_tags[building_id]
+            for tag in ('addr:city', 'addr:street', 'addr:housenumber'):
+                if tag in existing_tags:
+                    properties[tag] = existing_tags[tag]
 
-                _, street = street_addr
-                properties['proposed_street'] = street
+            _, street = street_addr
+            properties['proposed_street'] = street
 
-                # Only include each specific correction the first time, to avoid
-                # a lot of duplicated tasks.
-                if (street, osm_street) in included_mismatches:
-                    continue
+            # Only include each specific correction the first time, to avoid
+            # a lot of duplicated tasks.
+            if (street, osm_street) in included_mismatches:
+                continue
 
-                included_mismatches.add((street, osm_street))
+            included_mismatches.add((street, osm_street))
 
-                geo_doc = {
-                    'type': 'FeatureCollection',
-                    'features': [
-                        {
-                            'type': 'Feature',
-                            'geometry': {
-                                'type': 'Polygon',
-                                'coordinates': [polygon_coords],
-                            },
-                            'properties': properties,
+            geo_doc = {
+                'type': 'FeatureCollection',
+                'features': [
+                    {
+                        'type': 'Feature',
+                        'geometry': {
+                            'type': 'Polygon',
+                            'coordinates': [polygon_coords],
                         },
-                    ],
-                }
-                f.write('\x1e')
-                json.dump(geo_doc, f)
-                f.write('\n')
+                        'properties': properties,
+                    },
+                ],
+            }
+            f.write('\x1e')
+            json.dump(geo_doc, f)
+            f.write('\n')
+
+    print(f'Writing mismatched_building_number_tags issues... ({len(mismatched_building_number_tags)} issues)')
+    with open('issues/mismatched_building_number_tags.geojson', 'w') as f:
+        for building_id, (feature_ids, street_addr, cities, osm_house_number) in sorted(mismatched_building_number_tags.items()):
+            osm_addr = buildings_address_tags[building_id]
+
+            osm_type, ref = buildings[building_id]
+            if osm_type == 'way':
+                nodes = global_osm_ways[building_id]
+            elif osm_type == 'relation':
+                nodes = global_osm_ways[ref]
+            else:
+                continue
+
+            latlon_coords = np.array([
+                global_osm_nodes[node_id]
+                for node_id in nodes
+            ])
+            polygon_coords = np.column_stack((latlon_coords[:,1], latlon_coords[:,0])).tolist()
+
+            properties = {
+                'id': f'{osm_type}/{building_id}',
+            }
+            existing_tags = buildings_all_tags[building_id]
+            for tag in ('addr:city', 'addr:street', 'addr:housenumber'):
+                if tag in existing_tags:
+                    properties[tag] = existing_tags[tag]
+
+            house_number, _ = street_addr
+            properties['proposed_house_number'] = house_number
+
+            geo_doc = {
+                'type': 'FeatureCollection',
+                'features': [
+                    {
+                        'type': 'Feature',
+                        'geometry': {
+                            'type': 'Polygon',
+                            'coordinates': [polygon_coords],
+                        },
+                        'properties': properties,
+                    },
+                ],
+            }
+            f.write('\x1e')
+            json.dump(geo_doc, f)
+            f.write('\n')
 
 
 if __name__ == '__main__':
