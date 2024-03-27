@@ -414,8 +414,12 @@ def main():
         if (fraction := properties['FRACTION']):
             if fraction.strip() == '':
                 fraction = None
+            elif fraction == '1/2':
+                house_number = f'{house_number} {fraction}'
+            elif re.match(r'^[A-Z]$', fraction):
+                house_number = f'{house_number}{fraction}'
             else:
-                print(f'Address has a fraction: {fraction}, street: {street}, full address: {properties.get("FULL_ADDR")}')
+                print(f'Address has an unsupported fraction: {fraction}, street: {street}, full address: {properties.get("FULL_ADDR")}')
                 continue
 
         full_street = street
