@@ -42,6 +42,7 @@ def normalize_street_type(t: str) -> str | None:
         'HWY': 'Highway',
         'TER': 'Terrace',
         'ROW': 'Row',
+        'RW': 'Row',
         'AV': 'Avenue',
         'WY': 'Way',
         'LANE': 'Lane',
